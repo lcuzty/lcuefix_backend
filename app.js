@@ -15,17 +15,24 @@ const axios = require('axios')
 const connectionConfig = {
     host: 'localhost',
     user: 'root',
-    password: 'root',
+    password: 'ldhq_online123',
     database: 'lcuefix',
     port: 3306
 }
 
 const config = {
-    port: 8482,
+    port: 1000,
     prefix: '/api',
-    appId: 'wx22f063706a89b211',
-    appSecret: '283d1ad556f89a7e213b00aabb8f46c9'
+    appId: 'wxc818fff9cc711a5e',
+    appSecret: '1366db5d7744f0cc8c969b4910e24a5d',
+    logOnConsole:false,
+    logOnFile:true
 }
+
+// const options = {
+//     key: fs.readFileSync('/cert/private.key'),
+//     cert: fs.readFileSync('/cert/fullchain.pem')
+// }
 
 const connection = mysql.createConnection(connectionConfig);
 
@@ -92,24 +99,9 @@ async function main() {
                 // addVCode('export',re)
                 // tool.resSend(res, 1, '成功', re)
                 await generateExcelFile(parseInt(req.params.type),res)
-            } catch (error) {
-                console.log(error)
-                tool.resSend(res, -2, '系统内部错误', undefined)
-            }
-        })
 
-        app.post(config.prefix + '/export/vcode', async (req, res) => {
-            try {
-                data = decodeURIComponent(req.body.data)
-                data = checkRequestString(data)
-                if (data == null) {
-                    res.send('非法请求')
-                    return
-                }
-                //
-                let re = generateVerificationCode()
-                addVCode('export',re)
-                tool.resSend(res, 1, '成功', re)
+
+                clog('导出统计表格','admin',req.params.type,'成功',undefined)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -127,10 +119,19 @@ async function main() {
                 //
                 let re = await execSQL("select * from user where account = '2022400614'")
                 if(re.lengthX!=0){
+                    data.userInfo = JSON.parse(data.userInfo)
                     re = re[0]
-                    sendMessage(re.phoneNumber,data.type + ' ' + data.content + ' ' + data.userInfo)
+                    let content = data.type + 
+                    '\n' + data.content +
+                    '\n账号：' + data.userInfo.account + 
+                    '\n姓名：' + data.userInfo.name + 
+                    '\n电话：' + data.userInfo.phoneNumber + 
+                    '\nopenId：' + data.userInfo.openId
+                    sendMessage(re.phoneNumber,content)
                 }
                 tool.resSend(res, 1, '成功', undefined)
+
+                clog('发送反馈',data.userInfo.account,data.content,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -148,10 +149,16 @@ async function main() {
                 //
                 if((await execSQL("select * from user where account = '" + data.account + "'")).length==0){
                     tool.resSend(res, 0, '用户不存在', undefined)
+
+
+                    clog('修改用户名',data.account,data.name,'用户不存在',data)
                     return
                 }
                 await execSQL("update user set name = '" + data.name + "' where account = '" + data.account + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('修改用户名',data.account,data.name,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -170,11 +177,16 @@ async function main() {
                 let re = await execSQL("select * from complaint where id = '" + data.id + "'")
                 if(re.length==0){
                     tool.resSend(res, 0, '此巡查不存在，可能已被删除', undefined)
+
+                    
+                    clog('审核驳回巡查',data.account,data.id + ' ' + data.content,'此巡查不存在，可能已被删除',data)
                     return
                 }
                 re = re[0]
                 if((await checkPer(data.account,'sadmin',re.XQ,re.LX))==false && (await checkPer(data.account,'rep',re.XQ,re.LX))==false){
                     tool.resSend(res, 0, '提交失败，无处理权限', undefined)
+
+                    clog('审核驳回巡查',data.account,data.id + ' ' + data.content,'提交失败，无处理权限',data)
                     return
                 }
                 try {
@@ -190,7 +202,12 @@ async function main() {
 
                 let rexx = await execSQL("select * from rp where XQ = '" + re.XQ + "' and LX = '" + re.LX + "'")
                 for(let i=0;i<rexx.length;i++){
-                    sendMessage(rexx[i].phoneNumber, "【巡查速办审核驳回通知】尊敬的负责人，您于" + tool.formatTimeNew(new Date(re.rComTime)) + "处理的" + re.XQ + '-' + re.LX + "的巡查被驳回，驳回原因：" + data.content + "，请重新处理被驳回的巡查。感谢您对巡查速办的支持与理解。")
+                    let cc = '巡查处理结果驳回通知\n'
+                    cc += '负责人您好，您或其他同校区类型的负责人于' + tool.formatTimeNew(new Date(re.rComTime)) + '处理的巡查被驳回，请重新处理被驳回的巡查。\n'
+                    cc += '审核人：' + (await getUserName(data.account)) + '，驳回原因：' + data.content + '\n'
+                    cc += '巡查内容：' + re.content + '\n'
+                    cc += '校区类型：' + re.XQ + '-' + re.LX
+                    sendMessage(rexx[i].phoneNumber, cc)
                 }
 
                 re.content3.push({
@@ -202,11 +219,21 @@ async function main() {
                 re.account3.push(data.account)
                 await execSQL("update complaint set content2 = '',account2 = '',rComTime = '',sat = 0,image2 = '',content3 = '" + JSON.stringify(re.content3) + "',account3 = '" + JSON.stringify(re.account3) + "' where id = '" + data.id + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+                clog('审核驳回巡查',data.account,data.id + ' ' + data.content,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
             }
         })
+
+        async function getUserName(account){
+            let re = await execSQL("select name from user where account = '" + account + "'")
+            if(re.length==0){
+                return '账号已注销'
+            }
+            return re[0].name
+        }
 
         app.post(config.prefix + '/setAllUnSatComToSated', async (req, res) => {
             try {
@@ -219,6 +246,9 @@ async function main() {
                 //
                 await execSQL("update complaint set sat = 6 where sat = 0")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('将所有巡查设为不需要评价','admin',undefined,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -236,10 +266,16 @@ async function main() {
                 //
                 if(data.op=='do'){
                     await execSQL("update user set type = '-' where account = '" + data.account + "'")
+
+                    clog('冻结账号','admin',data.account,'成功',data)
                 }else{
                     await execSQL("update user set type = 'U',newUser = '' where account = '" + data.account + "'")
+
+                    clog('解冻账号','admin',data.account,'成功',data)
                 }
                 tool.resSend(res, 1, '成功', undefined)
+
+                
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -260,6 +296,9 @@ async function main() {
                 await execSQL("delete from rep where phoneNumber = '" + data.phoneNumber + "'")
                 await execSQL("delete from sadmin where phoneNumber = '" + data.phoneNumber + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('删除账号','admin',data.account + ' ' + data.phoneNumber,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -277,6 +316,9 @@ async function main() {
                 //
                 await execSQL("update user set password = 'ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f' where account = '" + data.account + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('重置密码','admin',data.account,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -294,6 +336,9 @@ async function main() {
                 //
                 await execSQL("update user set openId = '' where account = '" + data.account + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('解绑微信','admin',data.account,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -315,11 +360,17 @@ async function main() {
                         execSQL("insert into sadmin value('" + data.phoneNumber + "')")
                     }
                     tool.resSend(res, 1, '成功', undefined)
+
+
+                    clog('添加管理员','admin',data.phoneNumber,'成功',data)
                 }else{
                     if(re.length!=0){
                         execSQL("delete from sadmin where phoneNumber = '" + data.phoneNumber + "'")
                     }
                     tool.resSend(res, 1, '成功', undefined)
+
+
+                    clog('删除管理员','admin',data.phoneNumber,'成功',data)
                 }
 
                 
@@ -341,6 +392,9 @@ async function main() {
                 let re = await execSQL("select * from user where account = '" + data.account + "'")
                 if (re.length == 0) {
                     tool.resSend(res, 0, '用户不存在', undefined)
+
+
+                    clog('获取单个用户信息','admin',data.account + ' ' + data.password,'用户不存在',data)
                     return
                 }
                 re = re[0]
@@ -351,9 +405,10 @@ async function main() {
                     admin: re.type == 'admin'
                 }
 
-                console.log(re.per)
-
                 tool.resSend(res, 1, '成功', re)
+
+
+                clog('获取单个用户信息','admin',data.account + ' ' + data.password,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -372,6 +427,9 @@ async function main() {
                 let re = await execSQL("select * from user where account = '" + data.account + "'")
                 if (re.length == 0) {
                     tool.resSend(res, 0, '用户不存在', undefined)
+
+
+                    clog('用户主页数据',data.account,data.account,'用户不存在',data)
                     return
                 }
                 re = re[0]
@@ -464,6 +522,9 @@ async function main() {
                 }
 
                 tool.resSend(res, 1, '成功', re)
+
+
+                clog('用户主页数据',data.account,data.account,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -516,6 +577,9 @@ async function main() {
                     tz_zcyz: JSON.parse((await execSQL("select value from setting where keyName = 'zcyz'"))[0].value),
                 }
                 tool.resSend(res, 1, '成功', re)
+
+
+                clog('功能开关列表','admin','','成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -533,6 +597,9 @@ async function main() {
                 //
                 let re = await execSQL("select name,account,phoneNumber,type,newUser from user where account != 'admin'")
                 tool.resSend(res, 1, '成功', re)
+
+
+                clog('用户列表','admin','','成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -550,24 +617,39 @@ async function main() {
                 //
                 if (data.account == 'admin') {
                     tool.resSend(res, 0, '此账号不支持重置密码', undefined)
+
+
+                    clog('重置密码',data.account,data.account + ' ' + data.phoneNumber + ' ' + data.vcode,'此账号不支持重置密码',data)
                     return
                 }
                 let re = await execSQL("select * from user where account = '" + data.account + "'")
                 if (re.length == 0) {
                     tool.resSend(res, 0, '此账号不存在', undefined)
+
+
+                    clog('重置密码',data.account,data.account + ' ' + data.phoneNumber + ' ' + data.vcode,'此账号不存在',data)
                     return
                 }
                 re = re[0]
                 if (re.phoneNumber != data.phoneNumber) {
                     tool.resSend(res, 0, '输入的电话号码与输入账号的电话号码不匹配', undefined)
+
+
+                    clog('重置密码',data.account,data.account + ' ' + data.phoneNumber + ' ' + data.vcode,'输入的电话号码与输入账号的电话号码不匹配',data)
                     return
                 }
                 if (checkVCode(data.phoneNumber, data.vcode) == false) {
                     tool.resSend(res, 0, '验证码错误或已失效', undefined)
+
+
+                    clog('重置密码',data.account,data.account + ' ' + data.phoneNumber + ' ' + data.vcode,'验证码错误或已失效',data)
                     return
                 }
                 await execSQL("update user set password = 'ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f' where account = '" + data.account + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('重置密码',data.account,data.account + ' ' + data.phoneNumber + ' ' + data.vcode,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -585,22 +667,34 @@ async function main() {
                 //
                 if (data.account == 'admin') {
                     tool.resSend(res, 0, '此账号不支持重置密码', undefined)
+
+
+                    clog('重置密码获取验证码',data.account,data.account + ' ' + data.phoneNumber,'此账号不支持重置密码',data)
                     return
                 }
                 let re = await execSQL("select * from user where account = '" + data.account + "'")
                 if (re.length == 0) {
                     tool.resSend(res, 0, '此账号不存在', undefined)
+
+
+                    clog('重置密码获取验证码',data.account,data.account + ' ' + data.phoneNumber,'此账号不存在',data)
                     return
                 }
                 re = re[0]
                 if (re.phoneNumber != data.phoneNumber) {
                     tool.resSend(res, 0, '输入的电话号码与输入账号的电话号码不匹配', undefined)
+
+
+                    clog('重置密码获取验证码',data.account,data.account + ' ' + data.phoneNumber,'输入的电话号码与输入账号的电话号码不匹配',data)
                     return
                 }
                 let re1 = generateVerificationCode()
                 addVCode(data.phoneNumber, re1)
-                sendMessage(data.phoneNumber, "【巡查速办】您好，您正在请求重置登录密码。验证码为：" + re1 + "。请在重置密码界面输入此验证码以完成密码重置。该验证码有效期为10分钟，请勿泄露给他人。如非本人操作，请忽略此短信。")
-                tool.resSend(res, 0, "【巡查速办】您好，您正在请求重置登录密码。验证码为：" + re1 + "。请在重置密码界面输入此验证码以完成密码重置。该验证码有效期为10分钟，请勿泄露给他人。如非本人操作，请忽略此短信。", undefined)
+                sendMessage(data.phoneNumber, "您好，您正在请求重置登录密码。验证码为：" + re1 + "。请在重置密码界面输入此验证码以完成密码重置。该验证码有效期为10分钟，请勿泄露给他人。如非本人操作，请忽略此短信。")
+                tool.resSend(res, 1, "成功", undefined)
+
+
+                clog('重置密码获取验证码',data.account,data.account + ' ' + data.phoneNumber,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -621,6 +715,9 @@ async function main() {
 
 
                 tool.resSend(res, 1, '成功', data1)
+
+
+                clog('后台统计数据','admin','','成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -663,7 +760,14 @@ async function main() {
             }
             rej.dimension = data
 
-
+            rej.user = {
+                num:(await execSQL("select * from user")).length,
+                ydj:(await execSQL("select * from user where type = '-'")).length,
+                new:(await execSQL("select * from user where newUser = 'N'")).length,
+                rpn:(await execSQL("select distinct phoneNumber from rp")).length,
+                repn:(await execSQL("select distinct phoneNumber from rep")).length,
+                sadminn:(await execSQL("select * from sadmin")).length,
+            }
 
             return rej
         }
@@ -772,10 +876,16 @@ async function main() {
                 let re = await execSQL("select * from user where phoneNumber = '" + data.phoneNumber + "'")
                 if (re.length != 0) {
                     tool.resSend(res, 0, '此电话号码已与其他账号绑定', undefined)
+
+
+                    clog('修改登录密码',data.account,data.account + ' ' + data.phoneNumber + ' ' + data.vcode,'此电话号码已与其他账号绑定',data)
                     return
                 }
                 if (checkVCode(data.phoneNumber, data.vcode) == false) {
                     tool.resSend(res, 0, '验证码错误或已失效', undefined)
+
+
+                    clog('修改登录密码',data.account,data.account + ' ' + data.phoneNumber + ' ' + data.vcode,'验证码错误或已失效',data)
                     return
                 }
                 await execSQL("update user set phoneNumber = '" + data.phoneNumber + "' where account = '" + data.account + "'")
@@ -783,6 +893,9 @@ async function main() {
                 await execSQL("update rep set phoneNumber = '" + data.phoneNumber + "' where phoneNumber = '" + data.oPhoneNumber + "'")
                 await execSQL("update rep sadmin phoneNumber = '" + data.phoneNumber + "' where phoneNumber = '" + data.oPhoneNumber + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('修改登录密码',data.account,data.account + ' ' + data.phoneNumber + ' ' + data.vcode,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -806,6 +919,9 @@ async function main() {
                 let re = await execSQL("select * from complaint where id = '" + data.id + "'")
                 if(re.length==0){
                     tool.resSend(res, 0, '此巡查不存在，可能已被删除', undefined)
+
+
+                    clog('巡查联系人列表',undefined,data.id,'此巡查不存在，可能已被删除',data)
                     return
                 }
                 re = re[0]
@@ -871,6 +987,9 @@ async function main() {
                 rej.sh = JSON.parse(JSON.stringify(re1))
 
                 tool.resSend(res, 1, '成功', rej)
+
+
+                clog('巡查联系人列表',re.account,data.id,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -889,15 +1008,24 @@ async function main() {
                 let re = await execSQL("select * from complaint where id = '" + data.id + "'")
                 if (re.length == 0) {
                     tool.resSend(res, 0, '此巡查已被删除', undefined)
+
+
+                    clog('评价巡查',undefined,data.id + data.sat.toString(),'此巡查已被删除',data)
                     return
                 }
                 re = re[0]
                 if (re.sat != 0) {
                     tool.resSend(res, 0, '此巡查已被评价', undefined)
+
+
+                    clog('评价巡查',re.account,data.id + data.sat.toString(),'此巡查已被评价',data)
                     return
                 }
                 await execSQL("update complaint set sat = " + data.sat + ", satTime = '" + (new Date()).toString() + "' where id = '" + data.id + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('评价巡查',re.account,data.id + data.sat.toString(),'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -916,11 +1044,17 @@ async function main() {
                 let re = await execSQL("select * from complaint where id = '" + data.id + "'")
                 if (re.length == 0) {
                     tool.resSend(res, 0, '此巡查已被删除', undefined)
+
+
+                    clog('撤回巡查',undefined,data.id,'此巡查已被删除',data)
                     return
                 }
                 re = re[0]
                 if (re.account2 != '') {
                     tool.resSend(res, 0, '此巡查已被处理，不能撤回', undefined)
+
+
+                    clog('撤回巡查',re.account,data.id,'此巡查已被处理，不能撤回',data)
                     return
                 }
                 re = JSON.parse(re.image)
@@ -929,6 +1063,9 @@ async function main() {
                 }
                 await execSQL("delete from complaint where id = '" + data.id + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('撤回巡查',re.account,data.id,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -953,15 +1090,24 @@ async function main() {
                 let re = await execSQL("select * from complaint where id = '" + data.id + "'")
                 if (re.length == 0) {
                     tool.resSend(res, -1, '此巡查已被删除', undefined)
+
+
+                    clog('处理巡查',data.account2,data.id,'此巡查已被删除',data)
                     return
                 }
                 re = re[0]
                 if((await checkPer(data.account2,'rp',re.XQ,re.LX))==false){
                     tool.resSend(res, 0, '提交失败，无处理权限', undefined)
+
+
+                    clog('处理巡查',data.account2,data.id,'提交失败，无处理权限',data)
                     return
                 }
                 if (re.content2 != '') {
                     tool.resSend(res, 0, '提交失败，因为此巡查已被处理', undefined)
+
+
+                    clog('处理巡查',data.account2,data.id,'提交失败，因为此巡查已被处理',data)
                     return
                 }
                 let content3 = JSON.parse(re.content3)
@@ -976,25 +1122,46 @@ async function main() {
                 })
                 account3.push(data.account2)
                 await execSQL("update complaint set content2 = '" + data.content2 + "', image2 = '" + JSON.stringify(data.image2) + "', account2 = '" + data.account2 + "', rComTime = '" + (new Date()).toString() + "',content3 = '" + JSON.stringify(content3) + "',account3 = '" + JSON.stringify(account3) + "',deal = " + data.isDeal.toString() + ",sat = " + ((await getSetting('myd'))?'0':'6') + " where id = '" + data.id + "'")
-                let re1 = await execSQL("select phoneNumber from user where account = '" + data.account2 + "'")
+                let re1 = await execSQL("select phoneNumber from user where account = '" + re.account + "'")
                 let ret = JSON.parse((await execSQL("select value from setting where keyName = 'sendMessage'"))[0].value)
+                let cc = ''
                 if (re1.length != 0 && ret[1]) {
                     re1 = re1[0]
                     if(data.isDeal==1){
-                        if (new Date() > new Date(re.comTime)) {
-                            sendMessage(re1.phoneNumber, "【巡查速办巡查处理通知】尊敬的巡查人，关于您于" + tool.formatTimeNew(new Date(re.createTime)) + "提交的巡查，我们已进行处理。非常抱歉，维修工未在您设定的时间内完成维修工作。我们将继续努力提升服务质量，确保类似问题不再发生。再次感谢您的理解与耐心等待，如有需要，请随时与我们联系。请尽快为本次服务评价。")
-                        } else {
-                            if(await getSetting('myd')){
-                                sendMessage(re1.phoneNumber, "【巡查速办巡查处理通知】尊敬的巡查人，关于您于" + tool.formatTimeNew(new Date(re.createTime)) + "提交的巡查，我们已处理完毕。您的巡查已得到维修工负责人的关注并及时处理。感谢您对巡查速办的支持与理解。请尽快为本次服务评价。")
-                            }else{
-                                sendMessage(re1.phoneNumber, "【巡查速办巡查处理通知】尊敬的巡查人，关于您于" + tool.formatTimeNew(new Date(re.createTime)) + "提交的巡查，我们已处理完毕。您的巡查已得到维修工负责人的关注并及时处理。感谢您对巡查速办的支持与理解。")
-                            }
+                        if(await getSetting('myd')){
+                            cc = '巡查处理通知\n'
+                            cc += '巡查人您好，您于' + tool.formatTimeNew(new Date(re.createTime)) + '提交的巡查已被处理。请尽快登录小程序完成本次巡查的满意度调查。\n'
+                            cc += '负责人：' + (await getUserName(data.account2)) + '，留言：' + data.content2 + '\n'
+                            cc += '巡查内容：' + re.content + '\n'
+                            cc += '校区类型：' + re.XQ + '-' + re.LX
+
+                            sendMessage(re1.phoneNumber, cc)
+                        }else{
+                            cc = '巡查处理通知\n'
+                            cc += '巡查人您好，您于' + tool.formatTimeNew(new Date(re.createTime)) + '提交的巡查已被处理。本次巡查不需要进行满意度调查。\n'
+                            cc += '负责人：' + (await getUserName(data.account2)) + '，留言：' + data.content2 + '\n'
+                            cc += '巡查内容：' + re.content + '\n'
+                            cc += '校区类型：' + re.XQ + '-' + re.LX
+
+                            sendMessage(re1.phoneNumber, cc)
                         }
                     }else{
                         if(await getSetting('myd')){
-                            sendMessage(re1.phoneNumber, "【巡查速办巡查处理通知】尊敬的巡查人，非常抱歉，关于您于" + tool.formatTimeNew(new Date(re.createTime)) + "提交的巡查未处理，因为" + data.content2 + "。感谢您对巡查速办的支持与理解。请尽快为本次服务评价。")
+                            cc = '巡查处理通知\n'
+                            cc += '巡查人您好，负责人拒绝处理您于' + tool.formatTimeNew(new Date(re.createTime)) + '提交的巡查。请尽快登录小程序完成本次巡查的满意度调查。\n'
+                            cc += '负责人：' + (await getUserName(data.account2)) + '，留言：' + data.content2 + '\n'
+                            cc += '巡查内容：' + re.content + '\n'
+                            cc += '校区类型：' + re.XQ + '-' + re.LX
+
+                            sendMessage(re1.phoneNumber, cc)
                         }else{
-                            sendMessage(re1.phoneNumber, "【巡查速办巡查处理通知】尊敬的巡查人，非常抱歉，关于您于" + tool.formatTimeNew(new Date(re.createTime)) + "提交的巡查未处理，因为" + data.content2 + "。感谢您对巡查速办的支持与理解。")
+                            cc = '巡查处理通知\n'
+                            cc += '巡查人您好，负责人拒绝处理您于' + tool.formatTimeNew(new Date(re.createTime)) + '提交的巡查。本此巡查不需要进行满意度调查。\n'
+                            cc += '负责人：' + (await getUserName(data.account2)) + '，留言：' + data.content2 + '\n'
+                            cc += '巡查内容：' + re.content + '\n'
+                            cc += '校区类型：' + re.XQ + '-' + re.LX
+
+                            sendMessage(re1.phoneNumber, cc)
                         }
                     }
                     
@@ -1002,10 +1169,19 @@ async function main() {
                 if(await getSetting('xcsh')){
                     let re00 = await execSQL("select * from rep where XQ = '" + re.XQ + "' and LX = '" + re.LX + "'")
                     for(let i=0;i<re00.length;i++){
-                        sendMessage(re00[i].phoneNumber, "【巡查速办审核通知】尊敬的审核人，您有一条新的巡查待审核，请尽快打开小程序主页的审核页面完成审核。感谢您对巡查速办的支持与理解。")
+                        cc = '巡查待审核通知\n'
+                        cc += '审核人您好，您有一条新的巡查待审核，请尽快打开小程序主页的审核页面完成审核。感谢您对巡查速办的支持与理解。\n'
+                        cc += '负责人：' + (await getUserName(data.account2)) + '，留言：' + data.content2 + '\n'
+                        cc += '巡查内容：' + re.content + '\n'
+                        cc += '校区类型：' + re.XQ + '-' + re.LX
+
+                        sendMessage(re00[i].phoneNumber, cc)
                     }
                 }
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('处理巡查',data.account2,data.id,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1026,16 +1202,27 @@ async function main() {
                 re = await getComplaintUserInfo(re)
                 if (re.length == 0) {
                     tool.resSend(res, 0, '失败', undefined)
+
+
+                    clog('获取单个巡查信息',undefined,data.id,'巡查不存在',data)
                     return
                 }
                 re = re[0]
                 re.userInfo = (await execSQL("select * from user where account = '" + re.account + "'"))[0]
-                re.userInfo.avatarText = re.userInfo.name.slice(re.userInfo.name.length - 2, re.userInfo.name.length)
+                if(re.userInfo){
+                    re.userInfo.avatarText = re.userInfo.name.slice(re.userInfo.name.length - 2, re.userInfo.name.length)
+                }
                 if (re.account2 != '') {
                     re.userInfo2 = (await execSQL("select * from user where account = '" + re.account2 + "'"))[0]
-                    re.userInfo2.avatarText = re.userInfo2.name.slice(re.userInfo2.name.length - 2, re.userInfo2.name.length)
+                    if(re.userInfo2){
+                        re.userInfo2.avatarText = re.userInfo2.name.slice(re.userInfo2.name.length - 2, re.userInfo2.name.length)
+                    }
+                    
                 }
                 tool.resSend(res, 1, '成功', re)
+
+
+                clog('获取单个巡查信息',undefined,data.id,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1060,6 +1247,9 @@ async function main() {
                         return new Date(b.createTime) - new Date(a.createTime)
                     })
                     tool.resSend(res, 1, '成功', re)
+
+
+                    clog('获取巡查列表','admin','管理员【详见data】','成功',data)
                     return
                 }
                 if (data.type == 'U') {
@@ -1084,6 +1274,9 @@ async function main() {
                         }
                     }
                     tool.resSend(res, 1, '成功', re0)
+
+
+                    clog('获取巡查列表',data.account,'巡查人【详见data】','成功',data)
                     return
                 }
                 let re = await execSQL("select * from user where account = '" + data.account + "'")
@@ -1116,6 +1309,9 @@ async function main() {
                     }
                 }
                 tool.resSend(res, 1, '成功', re00)
+
+
+                clog('获取巡查列表',data.account,'巡查人【详见data】','成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1140,7 +1336,9 @@ async function main() {
                         break;
                 }
                 if (arr[i].userInfo2 == undefined) {
-                    if (arr[i].userInfo.name.indexOf(data.tsSearchFormInput) == -1 && arr[i].account.indexOf(data.tsSearchFormInput) == -1 && arr[i].userInfo.phoneNumber.indexOf(data.tsSearchFormInput) == -1) continue
+                    if(arr[i].userInfo!=undefined){
+                        if (arr[i].userInfo.name.indexOf(data.tsSearchFormInput) == -1 && arr[i].account.indexOf(data.tsSearchFormInput) == -1 && arr[i].userInfo.phoneNumber.indexOf(data.tsSearchFormInput) == -1) continue
+                    }
                 } else {
                     if (arr[i].userInfo.name.indexOf(data.tsSearchFormInput) == -1 && arr[i].account.indexOf(data.tsSearchFormInput) == -1 && arr[i].userInfo.phoneNumber.indexOf(data.tsSearchFormInput) == -1 && arr[i].userInfo2.name.indexOf(data.tsSearchFormInput) == -1 && arr[i].account2.indexOf(data.tsSearchFormInput) == -1 && arr[i].userInfo2.phoneNumber.indexOf(data.tsSearchFormInput) == -1) continue
                 }
@@ -1159,6 +1357,45 @@ async function main() {
 
         async function sendMessage(phoneNumber, content) {
             console.log("已发送短信给", phoneNumber, '，内容是', content)
+            let prefix = '巡查速办  '
+            let xml1 = '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sms="http://sms.webservice.com">   <soapenv:Header/>   <soapenv:Body>      <sms:saveSmsInfo>         <sms:in0>'
+            let xml2 = '</sms:in0>      </sms:saveSmsInfo>   </soapenv:Body></soapenv:Envelope>'
+            let args = {
+              tp_name: 'cwxt',
+              sys_id: 'mp',
+              module_id: 'sms',
+              secret_key: 'gCr1JkOuZfvnpJLxzBjDtNo/woQ=',
+              interface_method: 'sms',
+              person_info: '||||' + phoneNumber,
+              sms_info: prefix + ' ' + content,
+              send_priority: '3',
+              operator_id: '管理员',
+              operator_id_number: '09901',
+              operator_unit_id: '1001016',
+              operator_unit_name: '网络信息中心',
+              templet_id: '0',
+              receipt_id: '0',
+              send_sys_id: '1',
+              send_sys_name: '财务管理系统',
+              user_browser: 'FireFox'
+            }
+            axios({  
+                method: 'post',  
+                url: 'http://vp.lcu.edu.cn/tp_mp/service/SmsService', // 替换为实际的接口地址  
+                data: xml1 + JSON.stringify(args) + xml2,  
+                headers: {  
+                    'Content-Type': 'text/xml;charset=UTF-8',
+                    'SOAPAction':'',
+                }  
+            })  
+            .then(response => {  
+                
+                clog('> 发短信',undefined,content,'成功',phoneNumber)
+            })  
+            .catch(error => {  
+
+                clog('> 发短信',undefined,content,'失败',phoneNumber)
+            });
         }
 
         function formatComTime(arr, isSHOpen, isMYDDCOpen) {
@@ -1233,6 +1470,7 @@ async function main() {
 
                 for(let i1=0;i1<arr[i].content3.length;i1++){
                     let re1 = await execSQL("select * from user where account = '" + arr[i].content3[i1].account + "'")
+                    if(re1.length==0)continue
                     re1[0].avatarText = re1[0].name.slice(re1[0].name.length - 2, re1[0].name.length)
                     arr[i].content3[i1].userInfo = re1[0]
                     if(arr[i].content3[i1].reTime){
@@ -1251,6 +1489,7 @@ async function main() {
                 }
                 if (arr[i].account2 != '') {
                     re = await execSQL("select * from user where account = '" + arr[i].account2 + "'")
+                    if(re.length==0)continue
                     re[0].avatarText = re[0].name.slice(re[0].name.length - 2, re[0].name.length)
                     if (re.length != 0) {
                         arr[i].userInfo2 = re[0]
@@ -1271,6 +1510,9 @@ async function main() {
                 //
                 let re = await execSQL("select phoneNumber from user where account = '" + data.account + "'")
                 tool.resSend(res, 1, '成功', re[0].phoneNumber)
+
+
+                clog('获取用户电话号码',undefined,data.account,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1291,6 +1533,9 @@ async function main() {
 
                 if (re1.hTime != '' && tool.formatTimeNew(new Date(re1.hTime)).indexOf('今天') != -1) {
                     tool.resSend(res, 0, '此巡查今日你已催办', undefined)
+
+
+                    clog('催办',undefined,data.id,'此巡查今日你已催办',data)
                     return
                 }
 
@@ -1298,11 +1543,19 @@ async function main() {
 
                 let re = await execSQL("select phoneNumber from rp where XQ = '" + re1.XQ + "' and LX = '" + re1.LX + "'")
                 for (let i = 0; i < re.length; i++) {
-                    await sendMessage(re[i].phoneNumber, "【巡查速办巡查催办】提醒您，巡查已超时未处理！该巡查发表于" + tool.formatTimeNew(new Date(re1.createTime)) + "，内容关于" + re1.content + "，涉及校区" + re1.XQ + "，类别为" + re1.LX + "。请尽快登录巡查速办小程序查看并处理，确保巡查得到及时解决。感谢您的配合与努力！")
+                    cc = '巡查催办通知\n'
+                    cc += '负责人您好，有巡查超时未处理，该巡查新建于' + tool.formatTimeNew(new Date(re1.createTime)) + '，请尽快处理。\n'
+                    cc += '巡查人：' + (await getUserName(re1.account)) + '，文字描述：' + re1.content + '\n'
+                    cc += '校区类型：' + re1.XQ + '-' + re1.LX
+                    
+                    await sendMessage(re[i].phoneNumber, cc)
                 }
 
 
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('催办',undefined,data.id,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1320,6 +1573,9 @@ async function main() {
                 //
                 if(data.account!='admin'){
                     tool.resSend(res, 0, '权限不够', undefined)
+
+
+                    clog('删除巡查',data.account,data.id,'权限不够',data)
                     return
                 }
                 let re = await execSQL("select * from complaint where id = '" + data.id + "'")
@@ -1334,7 +1590,12 @@ async function main() {
                     for(let i=0;i<re.content3.length;i++){
                         let t = re.content3[i].image
                         if(t==undefined)continue
-                        t = JSON.parse(t)
+                        try {
+                            t = JSON.parse(t)
+                        } catch (error) {
+                            
+                        }
+                        
                         for(let i1=0;i1<t.length;i1++){
                             await deleteFile(t[i1])
                         }
@@ -1343,6 +1604,9 @@ async function main() {
 
                 }
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('删除巡查',data.account,data.id,'成功',data)
                 //发送短信
             } catch (error) {
                 console.log(error)
@@ -1365,12 +1629,20 @@ async function main() {
                 let ret = JSON.parse((await execSQL("select value from setting where keyName = 'sendMessage'"))[0].value)
                 if (ret[0]) {
                     for (let i = 0; i < re.length; i++) {
-                        await sendMessage(re[i].phoneNumber, "【巡查速办巡查通知】您有新巡查待处理！巡查内容：" + data.content + "，含图片。涉及校区：" + data.XQ + "。类别：" + data.LX + "。处理截止时间：" + tool.formatTimeNew(new Date(data.comTime)) + "。请尽快登录巡查速办小程序查看并处理。感谢您的关注与及时处理！")
+                        cc = '新建巡查通知\n'
+                        cc += '负责人您好，您有新的巡查待处理，请尽快登录巡查速办小程序查看并处理。感谢您的关注与及时处理！\n'
+                        cc += '负责人：' + (await getUserName(data.account)) + '，文字描述：' + data.content + '\n'
+                        cc += '校区类型：' + data.XQ + '-' + data.LX
+
+                        await sendMessage(re[i].phoneNumber, cc)
                     }
                 }
 
                 await tool.waitSeconds(1)
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('新建巡查',data.account,data.content,'成功',data)
                 //发送短信
             } catch (error) {
                 console.log(error)
@@ -1389,6 +1661,9 @@ async function main() {
                 //
                 await execSQL("delete from " + data.type + " where LX = '" + data.LX + "' and XQ = '" + data.XQ + "' and phoneNumber = '" + data.phoneNumber + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('删除负责人权限','admin',data.phoneNumber + ' ' + data.XQ + ' ' + data.LX,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1407,15 +1682,24 @@ async function main() {
                 let re = await execSQL("select * from user where phoneNumber='" + data.phoneNumber + "'")
                 if (re.length == 0) {
                     tool.resSend(res, 0, '此电话号码没有注册', undefined)
+
+
+                    clog('添加负责人权限','admin',data.phoneNumber + ' ' + data.XQ + ' ' + data.LX,'此电话号码没有注册',data)
                     return
                 }
                 re = await execSQL("select * from " + data.type + " where XQ = '" + data.XQ + "' and LX = '" + data.LX + "' and phoneNumber = '" + data.phoneNumber + "'")
                 if (re.length != 0) {
                     tool.resSend(res, 0, '此电话号码已添加', undefined)
+
+
+                    clog('添加负责人权限','admin',data.phoneNumber + ' ' + data.XQ + ' ' + data.LX,'此电话号码已添加',data)
                     return
                 }
                 await execSQL("insert into " + data.type + " values('" + data.phoneNumber + "','" + data.XQ + "','" + data.LX + "')")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('添加负责人权限','admin',data.phoneNumber + ' ' + data.XQ + ' ' + data.LX,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1450,6 +1734,9 @@ async function main() {
                     }
                 }
                 tool.resSend(res, 1, '成功', re)
+
+
+                clog('获取负责人列表','admin',data.XQ + ' ' + data.LX,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1468,10 +1755,16 @@ async function main() {
                 let re = await execSQL("select * from dimension where type = '" + data.type + "' and name = '" + data.name + "'")
                 if (re.length != 0) {
                     tool.resSend(res, 0, '此' + data.type + '已存在', undefined)
+
+
+                    clog('添加多维度信息','admin',data.type + ' ' + data.name,'此' + data.type + '已存在',data)
                     return
                 }
                 await execSQL("insert into dimension values('" + data.type + "','" + data.name + "')")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('添加多维度信息','admin',data.type + ' ' + data.name,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1490,13 +1783,18 @@ async function main() {
                 await execSQL("delete from dimension where type = '" + data.type + "' and name = '" + data.name + "'")
                 if (data.type == '类别') {
                     await execSQL("delete from rp where LX = '" + data.name + "'")
+                    await execSQL("delete from rep where LX = '" + data.name + "'")
                     await execSQL("delete from complaint where LX = '" + data.name + "'")
                 }
                 if (data.type == '校区') {
                     await execSQL("delete from rp where XQ = '" + data.name + "'")
+                    await execSQL("delete from rep where XQ = '" + data.name + "'")
                     await execSQL("delete from complaint where XQ = '" + data.name + "'")
                 }
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('删除多维度信息','admin',data.type + ' ' + data.name,'成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1546,6 +1844,9 @@ async function main() {
                     }
                 }
                 tool.resSend(res, 1, '成功', rej)
+
+
+                clog('获取多维度信息列表',undefined,'','成功',data)
             } catch (error) {
                 console.log(error)
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1564,19 +1865,31 @@ async function main() {
                 let re1 = await execSQL("select * from user where phoneNumber = '" + data.phoneNumber + "'")
                 if (re1.length != 0) {
                     tool.resSend(res, 0, '此电话号码已被注册', undefined)
+
+
+                    clog('注册',undefined,data.phoneNumber + ' ' + data.account + ' ' + data.name,'此电话号码已被注册',data)
                     return
                 }
                 if (checkVCode(data.phoneNumber, data.vcode) == false) {
                     tool.resSend(res, 0, '验证码已失效或错误', undefined)
+
+
+                    clog('注册',undefined,data.phoneNumber + ' ' + data.account + ' ' + data.name,'验证码已失效或错误',data)
                     return
                 }
                 let re = await execSQL("select account from user where account = '" + data.account + "'")
                 if (re.length != 0) {
                     tool.resSend(res, 0, '此学号/工号已被注册', undefined)
+
+
+                    clog('注册',undefined,data.phoneNumber + ' ' + data.account + ' ' + data.name,'此学号/工号已被注册',data)
                     return
                 }
                 await execSQL("insert into user values('" + data.account + "','" + data.password + "','" + data.name + "','" + data.phoneNumber + "','','" + ((await getSetting("zcyz"))?'-':'U') + "','" + ((await getSetting("zcyz"))?'N':'') + "')")
                 tool.resSend(res, 1, '注册成功' + ((await getSetting("zcyz"))?'，新账号处于冻结状态，管理员审核通过后即可正常登录使用':''), undefined)
+
+
+                clog('注册',undefined,data.phoneNumber + ' ' + data.account + ' ' + data.name,'成功',data)
             } catch (error) {
                 tool.resSend(res, -2, '系统内部错误', undefined)
             }
@@ -1594,16 +1907,19 @@ async function main() {
                 let re1 = await execSQL("select * from user where phoneNumber = '" + data.phoneNumber + "'")
                 if (re1.length != 0) {
                     tool.resSend(res, 0, '此电话号码已被注册', undefined)
+
+
+                    clog('注册获取验证码',undefined,data.phoneNumber,'此电话号码已被注册',data)
                     return
                 }
                 let re = generateVerificationCode()
                 addVCode(data.phoneNumber, re)
-                tool.resSend(res, 0, "【巡查速办】您的验证码为：" + re + "。请在巡查速办微信小程序中输入此验证码完成操作。切勿泄露给他人，感谢您的使用！", undefined)
-                //发送短信
-                sendMessage(data.phoneNumber, "【巡查速办】您的验证码为：" + re + "。请在巡查速办微信小程序中输入此验证码完成操作。切勿泄露给他人，感谢您的使用！")
-                return
+                
+                sendMessage(data.phoneNumber, "您的验证码为：" + re + "。请在巡查速办微信小程序中输入此验证码完成操作。切勿泄露给他人，感谢您的使用！")
+                tool.resSend(res, 1, "成功", undefined)
 
-                tool.resSend(res, 1, '成功', undefined)
+
+                clog('注册获取验证码',undefined,data.phoneNumber + ' ' + re,'成功',data)
             } catch (error) {
                 tool.resSend(res, -2, '系统内部错误', undefined)
             }
@@ -1629,6 +1945,9 @@ async function main() {
                 }
                 await execSQL("update setting set value = '" + data.value + "' where keyName = '" + data.keyName + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('更新设置或添加设置',undefined,data.keyName + ' ' + data.value.toString(),'成功',data)
             } catch (error) {
                 tool.resSend(res, -2, '系统内部错误', undefined)
             }
@@ -1646,6 +1965,9 @@ async function main() {
                 let re = await execSQL("select * from setting where keyName = '" + data.keyName + "'")
                 if (re.length == 0) {
                     tool.resSend(res, 0, '无此设置', undefined)
+
+
+                    clog('获取设置',undefined,data.keyName,'无此设置',data)
                     return
                 }
                 re = re[0]
@@ -1655,6 +1977,9 @@ async function main() {
 
                 }
                 tool.resSend(res, 1, '成功', re.value)
+
+
+                clog('获取设置',undefined,data.keyName,'成功',data)
             } catch (error) {
                 tool.resSend(res, -2, '系统内部错误', undefined)
             }
@@ -1672,16 +1997,25 @@ async function main() {
                 let re = await execSQL("select * from user where account = '" + data.account + "'")
                 if (re.length == 0) {
                     tool.resSend(res, 0, '修改失败', undefined)
+
+
+                    clog('修改登录密码',data.account,data.np,'修改失败',data)
                     return
                 }
                 re = re[0]
                 if (re.password != data.op) {
                     tool.resSend(res, 0, '原密码错误', undefined)
+
+
+                    clog('修改登录密码',data.account,data.np,'原密码错误',data)
                     return
                 }
                 await execSQL("update user set password = '" + data.np + "' where account = '" + data.account + "'")
                 await execSQL("update user set openId = '' where account = '" + data.account + "'")
                 tool.resSend(res, 1, '成功', undefined)
+
+
+                clog('修改登录密码',data.account,data.np,'成功',data)
                 return
             } catch (error) {
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1699,6 +2033,9 @@ async function main() {
                 //
                 await execSQL("update user set openId = '' where account = '" + data.account + "'")
                 tool.resSend(res, 1, '成功', re)
+
+
+                clog('退出登录',data.account,'','成功',data)
                 return
             } catch (error) {
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1717,19 +2054,38 @@ async function main() {
                 let re = await execSQL("select * from user where account = '" + data.account + "'")
                 if (re.length == 0) {
                     tool.resSend(res, 0, '用户不存在', undefined)
+
+
+                    clog('登录',data.account,data.account,'用户不存在',data)
                     return
                 }
                 re = re[0]
                 if(re.type=='-' && re.newUser=='N'){
                     tool.resSend(res, 0, '此账号尚未通过管理员审核', undefined)
+
+
+                    clog('登录',data.account,data.account,'此账号尚未通过管理员审核',data)
+                    return
+                }
+                if(re.type=='-'){
+                    tool.resSend(res, 0, '此账号已被冻结', undefined)
+
+
+                    clog('登录',data.account,data.account,'此账号已被冻结',data)
                     return
                 }
                 if (re.openId != data.openId && re.openId != '') {
                     tool.resSend(res, 0, '此账号已与其他微信用户绑定', undefined)
+
+
+                    clog('登录',data.account,data.account,'此账号已与其他微信用户绑定',data)
                     return
                 }
                 if (re.password != data.password) {
                     tool.resSend(res, 0, '密码错误', undefined)
+
+
+                    clog('登录',data.account,data.account,'密码错误',data)
                     return
                 }
                 await execSQL("update user set openId = '" + data.openId + "' where account = '" + data.account + "'")
@@ -1745,6 +2101,9 @@ async function main() {
                     re.otherTypeName = 'rep'
                 }
                 tool.resSend(res, 1, '成功', re)
+
+
+                clog('登录',data.account,data.account,'成功',data)
                 return
             } catch (error) {
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1763,11 +2122,17 @@ async function main() {
                 let re = await execSQL("select * from user where openId = '" + data.openId + "'")
                 if (re.length == 0) {
                     tool.resSend(res, 0, '未绑定账号', undefined)
+
+
+                    clog('自动登录',undefined,data.openId,'未绑定账号',data)
                 } else {
                     delete re[0].password
                     re = re[0]
                     if(re.type=='-'){
                         tool.resSend(res, 0, '此账号已被冻结', re)
+
+
+                        clog('自动登录',re.account,data.openId,'此账号已被冻结',data)
                         return
                     }
                     let re1 = await execSQL("select XQ,LX from rp where phoneNumber = '" + re.phoneNumber + "'")
@@ -1781,6 +2146,9 @@ async function main() {
                         re.otherTypeName = 'rep'
                     }
                     tool.resSend(res, 1, '自动登录成功', re)
+
+
+                    clog('自动登录',re.account,data.openId,'成功',data)
                 }
             } catch (error) {
                 tool.resSend(res, -2, '系统内部错误', undefined)
@@ -1804,9 +2172,17 @@ async function main() {
                 axios(config1)
                     .then((res1) => {
                         tool.resSend(res, 1, '成功', res1.data.openid)
+
+
+                        clog('获取openId',undefined,data.code,'成功',data)
                     }).catch(err => {
                         tool.resSend(res, 0, '无法获取', undefined)
+
+
+                        clog('获取openId',undefined,data.code,'失败',data)
                     })
+
+                    
             } catch (error) {
                 tool.resSend(res, -2, '系统内部错误', undefined)
             }
@@ -1815,12 +2191,39 @@ async function main() {
         app.post(config.prefix + '/file/upload', upload.single('file'), async (req, res) => {
             if (!req.file) {
                 res.status(400).json({ error: '上传失败' });
+
+
+                clog('上传文件',undefined,'','失败',data)
             } else {
                 res.json({
                     status: 1,
                     content: '上传成功',
                     results: req.file.filename
                 })
+
+
+                clog('上传文件',undefined,req.file.filename,'成功',data)
+            }
+        })
+
+        app.get(config.prefix + '/log', async (req,res)=>{
+            try {
+                const XLSX = require('xlsx')
+                const wb = XLSX.utils.book_new();
+
+                let re = await execSQL("select * from log")
+                for(let i=0;i<re.length;i++){
+                    re[i] = Object.values(re[i])
+                }
+                re.reverse()
+
+                let ws = XLSX.utils.aoa_to_sheet(re);
+                XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+                const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+                res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+                res.send(excelBuffer);
+            } catch (error) {
+                
             }
         })
 
@@ -1838,8 +2241,8 @@ async function main() {
             fileStream.pipe(res);
         })
 
-        app.get('/', (req, res) => {
-            res.send('OK')
+        app.get('/.well-known/acme-challenge/Yt7LjyBvoDxhEf1dsG3Za0E5QuZE8D0DTvMt4vrwtEg', (req, res) => {
+            res.send('Yt7LjyBvoDxhEf1dsG3Za0E5QuZE8D0DTvMt4vrwtEg.k7HHcUxcqFkTRiOUrxCRlunUrUAq4-HlK5QMdJZPBck')
         })
 
         // app.get(config.prefix + '/exit', async (req, res) => {
@@ -1996,9 +2399,40 @@ function getCurrentYearMonthDayString() {
     return re
 }
 
-function clog(apiName, user, content, data) {
-    console.log(getCurrentTimeReadableString() + "\t" + apiName + "\t\t" + user + "\t\t" + content)
-    outputStringToFile('records/' + getCurrentYearMonthDayString() + '.txt', "" + getCurrentTimeReadableString() + "\t" + apiName + "\t\t" + user + "\t\t" + content + "\t\t\t\t" + JSON.stringify(data) + "\n")
+async function clog(apiName, userAccount, content, isSuccess, data) {
+    try {
+        content = content.toString()
+    } catch (error) {
+        
+    }
+    if(content==undefined || content==null)content = ''
+    let user = ''
+    if(userAccount=='admin'){
+        user = 'admin'
+    }else{
+        if(userAccount==undefined){
+            user = '未知用户'
+        }else{
+            let re = await execSQL("select name,phoneNumber from user where account = '" + userAccount + "'")
+            if(re.length==0){
+                user = '账号不存在'
+            }else{
+                re = re[0]
+                user = re.name + '（' + re.phoneNumber + '）'
+            }
+        }
+    }
+    if(config.logOnConsole){
+        console.log(getCurrentTimeReadableString() + " " + apiName + "\t\t\t\t" + user + "\t\t" + content + "\t\t" + isSuccess)
+    }
+    try {
+        if(config.logOnFile){
+            await execSQL("insert into log values('" + getCurrentTimeReadableString() + "','" + apiName + "','" + user + "','" + content + "','" + isSuccess + "','" + JSON.stringify(data) + "')")
+            // outputStringToFile('records/' + getCurrentYearMonthDayString() + '.txt', "" + getCurrentTimeReadableString() + "\t" + apiName + "\t\t" + user + "\t\t" + content + "\t\t" + isSuccess + "\t\t\t\t" + JSON.stringify(data) + "\n")
+        }
+    } catch (error) {
+        
+    }
 }
 
 async function outputStringToFile(fileName, content) {
@@ -2006,6 +2440,15 @@ async function outputStringToFile(fileName, content) {
         await fs.writeFile(fileName, getCurrentYearMonthDayString() + '\n', () => { });
     }
     await fs.appendFile(fileName, content, () => { });
+}
+
+function getFullLengthNumber(n,length){
+    n = JSON.stringify(n)
+    let c = length - n.length
+    for(let i=0;i<c;i++){
+        n = '0' + n
+    }
+    return n
 }
 
 async function generateExcelFile(type,res){
@@ -2318,7 +2761,7 @@ async function generateExcelFile(type,res){
 
         let table = [
             ['用户信息表'],
-            ['序号','学号/工号','姓名','电话号码','登录密码（sha256）','openId','类型（-表示已冻结）','未通过审核的新用户']
+            ['序号','学号/工号','姓名','电话号码','绑定微信','类型（-表示已冻结）','尚未通过审核的新用户']
         ]
 
         let re = await execSQL("select * from user")
@@ -2328,10 +2771,9 @@ async function generateExcelFile(type,res){
             currentLine.push(currentUser.account)
             currentLine.push(currentUser.name)
             currentLine.push(currentUser.phoneNumber)
-            currentLine.push(currentUser.password)
-            currentLine.push(currentUser.openId)
-            currentLine.push(currentUser.type)
-            currentLine.push(currentUser.newUser)
+            currentLine.push(currentUser.openId==''?'否':'是')
+            currentLine.push(currentUser.type=='admin'?'超级管理员':(currentUser.type=='U'?'普通用户':'已冻结的普通用户'))
+            currentLine.push(currentUser.newUser==''?'否':'是')
             table.push(currentLine)
         }
 
